@@ -11,6 +11,8 @@ mod shell;
 extern crate clap;
 extern crate isatty;
 extern crate rustsec;
+#[macro_use]
+extern crate serde_json;
 extern crate term;
 
 use clap::{App, Arg, SubCommand};
@@ -21,6 +23,11 @@ use rustsec::lockfile::Package;
 use shell::{ColorConfig, Shell};
 use std::process::exit;
 use term::color::{GREEN, RED, WHITE};
+
+enum OutputFormat {
+    Text,
+    Json,
+}
 
 fn main() {
     let matches = App::new("cargo")
@@ -36,11 +43,15 @@ fn main() {
                 .arg(
                     Arg::from_usage("--color=[COLOR] Colored output")
                         .possible_values(&["auto", "always", "never"]),
+                )
+                .arg(
+                    Arg::from_usage("--format=[FORMAT] Output Format")
+                        .possible_values(&["text", "json"]),
                 ),
         )
         .get_matches();
 
-    let (filename, url, color_config) =
+    let (filename, url, color_config, output_format) =
         if let Some(audit_matches) = matches.subcommand_matches("audit") {
             (
                 audit_matches.value_of("file").unwrap_or("Cargo.lock"),
@@ -48,6 +59,7 @@ fn main() {
                     .value_of("url")
                     .unwrap_or(rustsec::ADVISORY_DB_URL),
                 audit_matches.value_of("color").unwrap_or("auto"),
+                audit_matches.value_of("format").unwrap_or("text"),
             )
         } else {
             panic!("cargo-audit is intended to be invoked as a cargo subcommand");
@@ -59,6 +71,12 @@ fn main() {
         _ => ColorConfig::Auto,
     });
 
+    let output_format = match output_format {
+        "text" => OutputFormat::Text,
+        "json" => OutputFormat::Json,
+        _ => OutputFormat::Text,
+    };
+
     let lockfile = match Lockfile::load(filename) {
         Ok(lf) => lf,
         Err(RustSecError::IO) => {
@@ -68,45 +86,81 @@ fn main() {
         Err(ex) => panic!("Couldn't load {}: {}", filename, ex),
     };
 
-    shell
-        .say_status("Fetching", &format!("advisories `{}`", url), GREEN, true)
-        .unwrap();
+    if let OutputFormat::Text = output_format {
+        shell
+            .say_status("Fetching", &format!("advisories `{}`", url), GREEN, true)
+            .unwrap();
+    }
 
     let advisory_db =
         AdvisoryDatabase::fetch_from_url(url).expect("Couldn't fetch advisory database");
-
-    shell
-        .say_status(
-            "Scanning",
-            &format!(
-                "{} crates for vulnerabilities ({} advisories in database)",
-                lockfile.packages.len(),
-                advisory_db.iter().len()
-            ),
-            GREEN,
-            true,
-        )
-        .unwrap();
+    if let OutputFormat::Text = output_format {
+        shell
+            .say_status(
+                "Scanning",
+                &format!(
+                    "{} crates for vulnerabilities ({} advisories in database)",
+                    lockfile.packages.len(),
+                    advisory_db.iter().len()
+                ),
+                GREEN,
+                true,
+            )
+            .unwrap();
+    }
 
     let vulnerabilities = lockfile.vulnerabilities(&advisory_db);
-
-    if vulnerabilities.is_empty() {
-        shell
-            .say_status("Success", "No vulnerable packages found", GREEN, true)
-            .unwrap();
-    } else {
-        shell
-            .say_status("Warning", "Vulnerable crates found!", RED, true)
-            .unwrap()
+    if let OutputFormat::Text = output_format {
+        if vulnerabilities.is_empty() {
+            shell
+                .say_status("Success", "No vulnerable packages found", GREEN, true)
+                .unwrap();
+        } else {
+            shell
+                .say_status("Warning", "Vulnerable crates found!", RED, true)
+                .unwrap();
+        }
     }
+    match output_format {
+        OutputFormat::Text => {
+            for vuln in &vulnerabilities {
+                display_advisory(&mut shell, vuln.package, vuln.advisory).unwrap();
+            }
 
-    for vuln in &vulnerabilities {
-        display_advisory(&mut shell, vuln.package, vuln.advisory).unwrap();
-    }
-
-    if !vulnerabilities.is_empty() {
-        vulns_found(&mut shell, vulnerabilities.len()).unwrap();
-        exit(1);
+            if !vulnerabilities.is_empty() {
+                vulns_found(&mut shell, vulnerabilities.len()).unwrap();
+                exit(1);
+            }
+        }
+        OutputFormat::Json => {
+            let vulns: Vec<serde_json::Value> = vulnerabilities
+                .iter()
+                .map(|vuln| {
+                    let advisory = vuln.advisory;
+                    json!({
+                    // tool	"retire"
+                    // message	"3rd party CORS request may execute for jquery"
+                    // url	"https://github.com/jquery/jquery/issues/2432"
+                    // cve	"CVE-2015-9251"
+                    // file	"node_modules/sql.js/gh-pages/documentation/javascript/application.js"
+                    // priority	"Medium"
+                    "tool": "cargo-audit",
+                    "message": advisory.title,
+                    "url": advisory.url,
+                    "cve": advisory.id,
+                    "file": vuln.package.name,
+                    "priority": "Medium",
+                })
+                })
+                .collect();
+            let json_vulns: serde_json::Value = json!(*vulns);
+            if vulnerabilities.is_empty() {
+                shell.say(json_vulns, GREEN).unwrap();
+            } else {
+                shell.say(json_vulns, RED).unwrap();
+                exit(1)
+            }
+        }
     }
 }
 
