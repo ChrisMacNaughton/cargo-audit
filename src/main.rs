@@ -158,7 +158,6 @@ fn main() {
                 shell.say(json_vulns, GREEN).unwrap();
             } else {
                 shell.say(json_vulns, RED).unwrap();
-                exit(1)
             }
         }
     }
