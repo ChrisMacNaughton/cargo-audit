@@ -138,19 +138,19 @@ fn main() {
                 .map(|vuln| {
                     let advisory = vuln.advisory;
                     json!({
-                    // tool	"retire"
-                    // message	"3rd party CORS request may execute for jquery"
-                    // url	"https://github.com/jquery/jquery/issues/2432"
-                    // cve	"CVE-2015-9251"
-                    // file	"node_modules/sql.js/gh-pages/documentation/javascript/application.js"
-                    // priority	"Medium"
-                    "tool": "cargo-audit",
-                    "message": advisory.title,
-                    "url": advisory.url,
-                    "cve": advisory.id,
-                    "file": vuln.package.name,
-                    "priority": "Medium",
-                })
+                        // tool	"retire"
+                        // message	"3rd party CORS request may execute for jquery"
+                        // url	"https://github.com/jquery/jquery/issues/2432"
+                        // cve	"CVE-2015-9251"
+                        // file	"node_modules/sql.js/gh-pages/documentation/javascript/application.js"
+                        // priority	"Medium"
+                        "tool": "cargo-audit",
+                        "message": advisory.title,
+                        "url": advisory.url,
+                        "cve": advisory.id,
+                        "file": "Cargo.lock",
+                        "priority": "Unknown",
+                    })
                 })
                 .collect();
             let json_vulns: serde_json::Value = json!(*vulns);
